@@ -1,5 +1,5 @@
 {
-    "memo": "4ce49ad4105227467bccc48eec5832d84749da3dee8dc8f6574cd32fec3970c1",
+    "memo": "223e656f6d7c6544a75c194263d21b86876544e3808928f5ecf735351c5bc1f8",
     "projects": [
         {
             "name": "github.com/AlekSi/pointer",
@@ -164,6 +164,14 @@
             "packages": [
                 ".",
                 "swifttest"
+            ]
+        },
+        {
+            "name": "github.com/pkg/errors",
+            "version": "v0.8.0",
+            "revision": "645ef00459ed84a119197bfb8d8205042c6df63d",
+            "packages": [
+                "."
             ]
         },
         {
