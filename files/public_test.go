@@ -87,6 +87,7 @@ func (s *PublishedStorageSuite) TestRemoveDirs(c *C) {
 	c.Assert(err, IsNil)
 
 	err = s.storage.RemoveDirs("ppa/dists/", nil)
+	c.Assert(err, IsNil)
 
 	_, err = os.Stat(filepath.Join(s.storage.rootPath, "ppa/dists/squeeze/Release"))
 	c.Assert(err, NotNil)
@@ -101,6 +102,7 @@ func (s *PublishedStorageSuite) TestRemove(c *C) {
 	c.Assert(err, IsNil)
 
 	err = s.storage.Remove("ppa/dists/squeeze/Release")
+	c.Assert(err, IsNil)
 
 	_, err = os.Stat(filepath.Join(s.storage.rootPath, "ppa/dists/squeeze/Release"))
 	c.Assert(err, NotNil)
@@ -118,28 +120,28 @@ func (s *PublishedStorageSuite) TestLinkFromPool(c *C) {
 		{ // package name regular
 			prefix:           "",
 			component:        "main",
-			sourcePath:       "pool/01/ae/mars-invaders_1.03.deb",
+			sourcePath:       "mars-invaders_1.03.deb",
 			poolDirectory:    "m/mars-invaders",
 			expectedFilename: "pool/main/m/mars-invaders/mars-invaders_1.03.deb",
 		},
 		{ // lib-like filename
 			prefix:           "",
 			component:        "main",
-			sourcePath:       "pool/01/ae/libmars-invaders_1.03.deb",
+			sourcePath:       "libmars-invaders_1.03.deb",
 			poolDirectory:    "libm/libmars-invaders",
 			expectedFilename: "pool/main/libm/libmars-invaders/libmars-invaders_1.03.deb",
 		},
 		{ // duplicate link, shouldn't panic
 			prefix:           "",
 			component:        "main",
-			sourcePath:       "pool/01/ae/mars-invaders_1.03.deb",
+			sourcePath:       "mars-invaders_1.03.deb",
 			poolDirectory:    "m/mars-invaders",
 			expectedFilename: "pool/main/m/mars-invaders/mars-invaders_1.03.deb",
 		},
 		{ // prefix & component
 			prefix:           "ppa",
 			component:        "contrib",
-			sourcePath:       "pool/01/ae/libmars-invaders_1.04.deb",
+			sourcePath:       "libmars-invaders_1.04.deb",
 			poolDirectory:    "libm/libmars-invaders",
 			expectedFilename: "pool/contrib/libm/libmars-invaders/libmars-invaders_1.04.deb",
 		},
@@ -148,48 +150,47 @@ func (s *PublishedStorageSuite) TestLinkFromPool(c *C) {
 	pool := NewPackagePool(s.root)
 
 	for _, t := range tests {
-		t.sourcePath = filepath.Join(s.root, t.sourcePath)
-
-		err := os.MkdirAll(filepath.Dir(t.sourcePath), 0755)
+		tmpPath := filepath.Join(c.MkDir(), t.sourcePath)
+		err := ioutil.WriteFile(tmpPath, []byte("Contents"), 0644)
 		c.Assert(err, IsNil)
 
-		err = ioutil.WriteFile(t.sourcePath, []byte("Contents"), 0644)
+		srcPoolPath, err := pool.Import(tmpPath, t.sourcePath, &utils.ChecksumInfo{MD5: "c1df1da7a1ce305a3b60af9d5733ac1d"}, false)
 		c.Assert(err, IsNil)
 
-		err = s.storage.LinkFromPool(filepath.Join(t.prefix, "pool", t.component, t.poolDirectory), pool, t.sourcePath, utils.ChecksumInfo{}, false)
+		err = s.storage.LinkFromPool(filepath.Join(t.prefix, "pool", t.component, t.poolDirectory), pool, srcPoolPath, utils.ChecksumInfo{}, false)
 		c.Assert(err, IsNil)
 
 		st, err := os.Stat(filepath.Join(s.storage.rootPath, t.prefix, t.expectedFilename))
 		c.Assert(err, IsNil)
 
 		info := st.Sys().(*syscall.Stat_t)
-		c.Check(int(info.Nlink), Equals, 2)
+		c.Check(int(info.Nlink), Equals, 3)
 	}
 
 	// test linking files to duplicate final name
-	sourcePath := filepath.Join(s.root, "pool/02/bc/mars-invaders_1.03.deb")
-	err := os.MkdirAll(filepath.Dir(sourcePath), 0755)
+	tmpPath := filepath.Join(c.MkDir(), "mars-invaders_1.03.deb")
+	err := ioutil.WriteFile(tmpPath, []byte("Contents"), 0644)
 	c.Assert(err, IsNil)
 
-	err = ioutil.WriteFile(sourcePath, []byte("Contents"), 0644)
+	srcPoolPath, err := pool.Import(tmpPath, "mars-invaders_1.03.deb", &utils.ChecksumInfo{MD5: "02bcda7a1ce305a3b60af9d5733ac1d"}, true)
 	c.Assert(err, IsNil)
 
-	err = s.storage.LinkFromPool(filepath.Join("", "pool", "main", "m/mars-invaders"), pool, sourcePath, utils.ChecksumInfo{}, false)
+	st, err := pool.Stat(srcPoolPath)
+	c.Assert(err, IsNil)
+	nlinks := int(st.Sys().(*syscall.Stat_t).Nlink)
+
+	err = s.storage.LinkFromPool(filepath.Join("", "pool", "main", "m/mars-invaders"), pool, srcPoolPath, utils.ChecksumInfo{}, false)
 	c.Check(err, ErrorMatches, ".*file already exists and is different")
 
-	st, err := os.Stat(sourcePath)
+	st, err = pool.Stat(srcPoolPath)
 	c.Assert(err, IsNil)
-
-	info := st.Sys().(*syscall.Stat_t)
-	c.Check(int(info.Nlink), Equals, 1)
+	c.Check(int(st.Sys().(*syscall.Stat_t).Nlink), Equals, nlinks)
 
 	// linking with force
-	err = s.storage.LinkFromPool(filepath.Join("", "pool", "main", "m/mars-invaders"), pool, sourcePath, utils.ChecksumInfo{}, true)
+	err = s.storage.LinkFromPool(filepath.Join("", "pool", "main", "m/mars-invaders"), pool, srcPoolPath, utils.ChecksumInfo{}, true)
 	c.Check(err, IsNil)
 
-	st, err = os.Stat(sourcePath)
+	st, err = pool.Stat(srcPoolPath)
 	c.Assert(err, IsNil)
-
-	info = st.Sys().(*syscall.Stat_t)
-	c.Check(int(info.Nlink), Equals, 2)
+	c.Check(int(st.Sys().(*syscall.Stat_t).Nlink), Equals, nlinks+1)
 }

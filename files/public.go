@@ -78,13 +78,11 @@ func (storage *PublishedStorage) RemoveDirs(path string, progress aptly.Progress
 //
 // publishedDirectory is desired location in pool (like prefix/pool/component/liba/libav/)
 // sourcePool is instance of aptly.PackagePool
-// sourcePath is filepath to package file in package pool
+// sourcePath is a relative path to package file in package pool
 //
 // LinkFromPool returns relative path for the published file to be included in package index
 func (storage *PublishedStorage) LinkFromPool(publishedDirectory string, sourcePool aptly.PackagePool,
 	sourcePath string, sourceChecksums utils.ChecksumInfo, force bool) error {
-	// verify that package pool is local pool is filesystem pool
-	_ = sourcePool.(*PackagePool)
 
 	baseName := filepath.Base(sourcePath)
 	poolPath := filepath.Join(storage.rootPath, publishedDirectory)
@@ -99,7 +97,7 @@ func (storage *PublishedStorage) LinkFromPool(publishedDirectory string, sourceP
 	dstStat, err = os.Stat(filepath.Join(poolPath, baseName))
 	if err == nil {
 		// already exists, check source file
-		srcStat, err = os.Stat(sourcePath)
+		srcStat, err = sourcePool.Stat(sourcePath)
 		if err != nil {
 			// source file doesn't exist? problem!
 			return err
@@ -126,7 +124,8 @@ func (storage *PublishedStorage) LinkFromPool(publishedDirectory string, sourceP
 	}
 
 	// destination doesn't exist (or forced), create link
-	return os.Link(sourcePath, filepath.Join(poolPath, baseName))
+	// we assume we're dealing with local package pool, needs to be fixed eventually to support falling back to copy file
+	return sourcePool.(aptly.LocalPackagePool).Link(sourcePath, filepath.Join(poolPath, baseName))
 }
 
 // Filelist returns list of files under prefix
