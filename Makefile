@@ -1,6 +1,6 @@
 GOVERSION=$(shell go version | awk '{print $$3;}')
 VERSION=$(shell git describe --tags | sed 's@^v@@' | sed 's@-@+@g')
-PACKAGES=context database deb files http query swift s3 utils
+PACKAGES=context database deb files gpg http query swift s3 utils
 PYTHON?=python
 TESTS?=
 BINPATH?=$(GOPATH)/bin
@@ -35,16 +35,26 @@ coverage: coverage.out
 	go tool cover -html=coverage.out
 	rm -f coverage.out
 
-check:
-	gometalinter --vendor --vendored-linters --config=linter.json ./...
+check: system/env
+	if [ -x travis_wait ]; then \
+		travis_wait gometalinter --config=linter.json ./...; \
+	else \
+		gometalinter --config=linter.json ./...; \
+	fi
+	. system/env/bin/activate && flake8 --max-line-length=200 --exclude=system/env/ system/
 
 install:
 	go install -v -ldflags "-X main.Version=$(VERSION)"
 
-system-test: install
+system/env: system/requirements.txt
+	rm -rf system/env
+	virtualenv system/env
+	system/env/bin/pip install -r system/requirements.txt
+
+system-test: install system/env
 	if [ ! -e ~/aptly-fixture-db ]; then git clone https://github.com/aptly-dev/aptly-fixture-db.git ~/aptly-fixture-db/; fi
 	if [ ! -e ~/aptly-fixture-pool ]; then git clone https://github.com/aptly-dev/aptly-fixture-pool.git ~/aptly-fixture-pool/; fi
-	APTLY_VERSION=$(VERSION) PATH=$(BINPATH)/:$(PATH) $(PYTHON) system/run.py --long $(TESTS)
+	. system/env/bin/activate && APTLY_VERSION=$(VERSION) PATH=$(BINPATH)/:$(PATH) $(PYTHON) system/run.py --long $(TESTS)
 
 travis: $(TRAVIS_TARGET) check system-test
 

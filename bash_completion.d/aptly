@@ -58,10 +58,9 @@ _aptly()
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
     commands="api config db graph mirror package publish repo serve snapshot task version"
-    options="-architectures= -config= -dep-follow-all-variants -dep-follow-recommends -dep-follow-source -dep-follow-suggests -dep-verbose-resolve"
-
+    options="-architectures= -config= -db-open-attempts= -dep-follow-all-variants -dep-follow-recommends -dep-follow-source -dep-follow-suggests -dep-verbose-resolve -gpg-provider="
     db_subcommands="cleanup recover"
-    mirror_subcommands="create drop show list rename search update"
+    mirror_subcommands="create drop edit show list rename search update"
     publish_subcommands="drop list repo snapshot switch update"
     snapshot_subcommands="create diff drop filter list merge pull rename search show verify"
     repo_subcommands="add copy create drop edit import include list move remove rename search show"
@@ -500,7 +499,7 @@ _aptly()
           "snapshot"|"repo")
             if [[ $numargs -eq 0 ]]; then
               if [[ "$cur" == -* ]]; then
-                COMPREPLY=($(compgen -W "-batch -force-overwrite -distribution= -component= -gpg-key= -keyring= -label= -origin= -passphrase= -passphrase-file= -secret-keyring= -skip-contents -skip-signing" -- ${cur}))
+                COMPREPLY=($(compgen -W "-batch -force-overwrite -distribution= -component= -gpg-key= -keyring= -label= -origin= -notautomatic= -butautomaticupgrades= -passphrase= -passphrase-file= -secret-keyring= -skip-contents -skip-signing" -- ${cur}))
               else
                 if [[ "$subcmd" == "snapshot" ]]; then
                   COMPREPLY=($(compgen -W "$(__aptly_snapshot_list)" -- ${cur}))

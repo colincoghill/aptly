@@ -24,12 +24,12 @@ type Package struct {
 	Source string
 	// List of virtual packages this package provides
 	Provides []string
+	// Hash of files section
+	FilesHash uint64
 	// Is this source package
 	IsSource bool
 	// Is this udeb package
 	IsUdeb bool
-	// Hash of files section
-	FilesHash uint64
 	// Is this >= 0.6 package?
 	V06Plus bool
 	// Offload fields
@@ -40,6 +40,20 @@ type Package struct {
 	// Mother collection
 	collection *PackageCollection
 }
+
+// Package types
+const (
+	PackageTypeBinary = "deb"
+	PackageTypeUdeb   = "udeb"
+	PackageTypeSource = "source"
+)
+
+// Special arhictectures
+const (
+	ArchitectureAll    = "all"
+	ArhictectureAny    = "any"
+	ArchitectureSource = "source"
+)
 
 // Check interface
 var (
@@ -218,12 +232,12 @@ func (p *Package) GetField(name string) string {
 		return p.Architecture
 	case "$PackageType":
 		if p.IsSource {
-			return "source"
+			return PackageTypeSource
 		}
 		if p.IsUdeb {
-			return "udeb"
+			return PackageTypeUdeb
 		}
-		return "deb"
+		return PackageTypeBinary
 	case "Name":
 		return p.Name
 	case "Version":
@@ -256,7 +270,7 @@ func (p *Package) GetField(name string) string {
 
 // MatchesArchitecture checks whether packages matches specified architecture
 func (p *Package) MatchesArchitecture(arch string) bool {
-	if p.Architecture == "all" && arch != "source" {
+	if p.Architecture == ArchitectureAll && arch != ArchitectureSource {
 		return true
 	}
 
@@ -344,7 +358,7 @@ func (p *Package) GetDependencies(options int) (dependencies []string) {
 		if source == "" {
 			source = p.Name
 		}
-		if strings.Index(source, ")") != -1 {
+		if strings.Contains(source, ")") {
 			dependencies = append(dependencies, fmt.Sprintf("%s {source}", source))
 		} else {
 			dependencies = append(dependencies, fmt.Sprintf("%s (= %s) {source}", source, p.Version))
@@ -418,7 +432,7 @@ func (p *Package) CalculateContents(packagePool aptly.PackagePool, progress aptl
 	}
 
 	file := p.Files()[0]
-	path, err := packagePool.Path(file.Filename, file.Checksums)
+	poolPath, err := file.GetPoolPath(packagePool)
 	if err != nil {
 		if progress != nil {
 			progress.ColoredPrintf("@y[!]@| @!Failed to build pool path: @| %s", err)
@@ -426,7 +440,16 @@ func (p *Package) CalculateContents(packagePool aptly.PackagePool, progress aptl
 		return nil, err
 	}
 
-	contents, err := GetContentsFromDeb(path)
+	reader, err := packagePool.Open(poolPath)
+	if err != nil {
+		if progress != nil {
+			progress.ColoredPrintf("@y[!]@| @!Failed to open package in pool: @| %s", err)
+		}
+		return nil, err
+	}
+	defer reader.Close()
+
+	contents, err := GetContentsFromDeb(reader, file.Filename)
 	if err != nil {
 		if progress != nil {
 			progress.ColoredPrintf("@y[!]@| @!Failed to generate package contents: @| %s", err)
@@ -547,7 +570,7 @@ func (p *Package) LinkFromPool(publishedStorage aptly.PublishedStorage, packageP
 	}
 
 	for i, f := range p.Files() {
-		sourcePath, err := packagePool.Path(f.Filename, f.Checksums)
+		sourcePoolPath, err := f.GetPoolPath(packagePool)
 		if err != nil {
 			return err
 		}
@@ -555,7 +578,7 @@ func (p *Package) LinkFromPool(publishedStorage aptly.PublishedStorage, packageP
 		relPath := filepath.Join("pool", component, poolDir)
 		publishedDirectory := filepath.Join(prefix, relPath)
 
-		err = publishedStorage.LinkFromPool(publishedDirectory, packagePool, sourcePath, f.Checksums, force)
+		err = publishedStorage.LinkFromPool(publishedDirectory, f.Filename, packagePool, sourcePoolPath, f.Checksums, force)
 		if err != nil {
 			return err
 		}
@@ -596,29 +619,24 @@ func (p *Package) PoolDirectory() (string, error) {
 
 // PackageDownloadTask is a element of download queue for the package
 type PackageDownloadTask struct {
-	RepoURI         string
-	DestinationPath string
-	Checksums       utils.ChecksumInfo
+	File         *PackageFile
+	Additional   []PackageDownloadTask
+	TempDownPath string
 }
 
 // DownloadList returns list of missing package files for download in format
 // [[srcpath, dstpath]]
-func (p *Package) DownloadList(packagePool aptly.PackagePool) (result []PackageDownloadTask, err error) {
+func (p *Package) DownloadList(packagePool aptly.PackagePool, checksumStorage aptly.ChecksumStorage) (result []PackageDownloadTask, err error) {
 	result = make([]PackageDownloadTask, 0, 1)
 
-	for _, f := range p.Files() {
-		poolPath, err := packagePool.Path(f.Filename, f.Checksums)
-		if err != nil {
-			return nil, err
-		}
-
-		verified, err := f.Verify(packagePool)
+	for idx, f := range p.Files() {
+		verified, err := f.Verify(packagePool, checksumStorage)
 		if err != nil {
 			return nil, err
 		}
 
 		if !verified {
-			result = append(result, PackageDownloadTask{RepoURI: f.DownloadURL(), DestinationPath: poolPath, Checksums: f.Checksums})
+			result = append(result, PackageDownloadTask{File: &p.Files()[idx]})
 		}
 	}
 
@@ -626,11 +644,11 @@ func (p *Package) DownloadList(packagePool aptly.PackagePool) (result []PackageD
 }
 
 // VerifyFiles verifies that all package files have neen correctly downloaded
-func (p *Package) VerifyFiles(packagePool aptly.PackagePool) (result bool, err error) {
+func (p *Package) VerifyFiles(packagePool aptly.PackagePool, checksumStorage aptly.ChecksumStorage) (result bool, err error) {
 	result = true
 
 	for _, f := range p.Files() {
-		result, err = f.Verify(packagePool)
+		result, err = f.Verify(packagePool, checksumStorage)
 		if err != nil || !result {
 			return
 		}
@@ -645,7 +663,7 @@ func (p *Package) FilepathList(packagePool aptly.PackagePool) ([]string, error) 
 	result := make([]string, len(p.Files()))
 
 	for i, f := range p.Files() {
-		result[i], err = packagePool.RelativePath(f.Filename, f.Checksums)
+		result[i], err = f.GetPoolPath(packagePool)
 		if err != nil {
 			return nil, err
 		}
